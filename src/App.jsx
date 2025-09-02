@@ -1,21 +1,127 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 
 // Single‑file React landing page inspired by Slack aesthetics
-// — clean typography, rounded pills, subtle gradients, soft shadows
-// TailwindCSS utility classes are used for styling.
+// Tailwind utility classes are used for styling.
+// Frontend works without a backend (local‑only mode) and integrates with Vercel Functions when deployed.
+
+// ===================== CONFIG =====================
+const API_BASE = import.meta.env.VITE_API_BASE || '/api'
+const HAS_API = !String(API_BASE).includes('__no_api') // when '/__no_api' → local‑only mode
+const UNLOCK_PRICE = import.meta.env.VITE_UNLOCK_PRICE_EUR || '4.90'
+
+// ===================== LOCAL FALLBACK STORAGE =====================
+const STORAGE_KEY = 'briefbridge.briefs.v1'
+const UNLOCKS_KEY = 'briefbridge.unlocks.v1'
+function loadBriefsLocal() {
+  try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : [] } catch { return [] }
+}
+function saveBriefsLocal(briefs) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(briefs)) } catch {} }
+function loadUnlocks() { try { return new Set(JSON.parse(localStorage.getItem(UNLOCKS_KEY) || '[]')) } catch { return new Set() } }
+function saveUnlocks(set) { try { localStorage.setItem(UNLOCKS_KEY, JSON.stringify(Array.from(set))) } catch {} }
 
 export default function App() {
   const [openForm, setOpenForm] = useState(false)
+  const [briefs, setBriefs] = useState([])
+  const [serverReady, setServerReady] = useState(true)
+  const [unlocks, setUnlocks] = useState(loadUnlocks())
+
+  // Handle Stripe success redirect (?checkout=success&briefId=...)
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search)
+    const ok = p.get('checkout') === 'success'
+    const briefId = p.get('briefId')
+    if (ok && briefId) {
+      const next = new Set(unlocks); next.add(briefId); setUnlocks(next); saveUnlocks(next)
+      const url = new URL(window.location.href); url.searchParams.delete('checkout'); url.searchParams.delete('briefId'); window.history.replaceState({}, '', url)
+    }
+  }, [])
+
+  // Initial load: try API else fallback to localStorage
+  useEffect(() => {
+    ;(async () => {
+      if (HAS_API) {
+        try {
+          const res = await fetch(`${API_BASE}/briefs`)
+          if (!res.ok) throw new Error('No API')
+          const data = await res.json()
+          setBriefs(data.briefs || [])
+          setServerReady(true)
+        } catch {
+          setServerReady(false)
+          setBriefs(loadBriefsLocal())
+        }
+      } else {
+        setServerReady(false)
+        setBriefs(loadBriefsLocal())
+      }
+    })()
+  }, [])
+
+  async function handleSubmitBrief(brief) {
+    const temp = { id: (window.crypto?.randomUUID?.() || String(Date.now())), createdAt: Date.now(), ...brief }
+    // optimistic UI
+    setBriefs((b) => [temp, ...b])
+
+    if (HAS_API) {
+      try {
+        const res = await fetch(`${API_BASE}/briefs`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ brief })
+        })
+        if (!res.ok) throw new Error('Failed to create brief on server')
+        const { created } = await res.json()
+        setBriefs((prev) => [created, ...prev.filter((x) => x.id !== temp.id)])
+      } catch (err) {
+        console.error('Submit failed, falling back to local:', err)
+        const next = [temp, ...loadBriefsLocal()]
+        saveBriefsLocal(next)
+        setServerReady(false)
+      }
+    } else {
+      const next = [temp, ...loadBriefsLocal()]
+      saveBriefsLocal(next)
+      setServerReady(false)
+    }
+
+    setOpenForm(false)
+    const el = (typeof document !== 'undefined') ? document.getElementById('published-briefs') : null
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  async function startCheckout(brief) {
+    if (!HAS_API) { alert('Checkout requires backend (deploy API to enable).'); return }
+    try {
+      const origin = window.location.origin
+      const res = await fetch(`${API_BASE}/create-checkout-session`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ briefId: brief.id, successUrl: `${origin}/?checkout=success&briefId=${encodeURIComponent(brief.id)}`, cancelUrl: `${origin}/?checkout=cancel` })
+      })
+      if (!res.ok) throw new Error('Checkout failed')
+      const { url } = await res.json()
+      window.location.href = url
+    } catch (e) {
+      alert('Could not start checkout. Please try again later.')
+      console.error(e)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <SiteBackground />
       <Header onCTAClick={() => setOpenForm(true)} />
       <main>
+        {!serverReady && (
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-4">
+            <div className="rounded-xl bg-amber-50 text-amber-900 ring-1 ring-amber-200 p-3 text-sm">
+              Running in <strong>local-only</strong> mode (no backend detected). Briefs are stored in your browser until you deploy the API.
+            </div>
+          </div>
+        )}
         <Hero onCTAClick={() => setOpenForm(true)} />
         <LogosBar />
         <HowItWorks />
         <Categories onCTAClick={() => setOpenForm(true)} />
+        <PublishedBriefs briefs={briefs} unlocks={unlocks} serverReady={serverReady} onUnlock={startCheckout} />
         <FeaturedPros />
         <Stats />
         <Testimonials />
@@ -23,7 +129,7 @@ export default function App() {
         <CTA onCTAClick={() => setOpenForm(true)} />
       </main>
       <Footer />
-      {openForm && <BriefForm onClose={() => setOpenForm(false)} />}
+      {openForm && <BriefForm onClose={() => setOpenForm(false)} onSubmit={handleSubmitBrief} />}
     </div>
   )
 }
@@ -50,7 +156,7 @@ function Header({ onCTAClick }) {
           <nav className="hidden md:flex items-center gap-8 text-sm text-slate-600">
             <a href="#how" className="hover:text-slate-900">How it works</a>
             <a href="#categories" className="hover:text-slate-900">Categories</a>
-            <a href="#pros" className="hover:text-slate-900">For clients</a>
+            <a href="#published-briefs" className="hover:text-slate-900">Latest briefs</a>
             <a href="#faq" className="hover:text-slate-900">FAQ</a>
           </nav>
           <div className="flex items-center gap-3">
@@ -203,6 +309,69 @@ function Categories({ onCTAClick }) {
   )
 }
 
+function PublishedBriefs({ briefs, unlocks, serverReady, onUnlock }) {
+  const has = briefs && briefs.length > 0
+  return (
+    <section id="published-briefs" className="py-20">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex items-end justify-between">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Latest briefs</h2>
+            <p className="mt-2 text-slate-600">New briefs are published immediately. Contact details are hidden until you unlock a brief.</p>
+          </div>
+        </div>
+        {!has ? (
+          <div className="mt-8 rounded-2xl bg-slate-50 p-6 ring-1 ring-slate-200 text-slate-600">No briefs yet. Post one to see it appear here.</div>
+        ) : (
+          <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {briefs.map((b) => {
+              const unlocked = unlocks?.has?.(b.id)
+              return (
+                <article key={b.id} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold truncate" title={b.title}>{b.title}</h3>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">{b.category}</span>
+                  </div>
+                  <p className="mt-2 line-clamp-3 text-sm text-slate-600" title={b.details}>{b.details}</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-600">
+                    <div><span className="font-semibold">Budget:</span> {formatBudget(b)}</div>
+                    <div><span className="font-semibold">Timeline:</span> {b.timeline}</div>
+                  </div>
+                  <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm">
+                    <div className="font-semibold text-slate-700 mb-1">Contact</div>
+                    {!b.email ? (
+                      <div className="text-slate-500">Client hasn't provided contact yet.</div>
+                    ) : unlocked ? (
+                      <div className="select-all break-all">{b.name ? `${b.name} — ` : ''}{b.email}</div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-slate-500">Hidden • Unlock to reveal email</div>
+                        <button disabled={!serverReady} onClick={() => serverReady && onUnlock?.(b)} className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">{serverReady ? `Unlock €${UNLOCK_PRICE}` : 'Unlock (deploy API)'}</button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                    <div>{b.name || 'Anonymous'}{b.email && !unlocked ? ' • email hidden' : ''}</div>
+                    <time dateTime={new Date(b.createdAt).toISOString()}>{new Date(b.createdAt).toLocaleDateString()}</time>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+        <p className="mt-6 text-sm text-slate-500">Payments are processed by Stripe. Unlocks are tied to this browser in this MVP; server-side validation is handled via webhook.</p>
+      </div>
+    </section>
+  )
+}
+
+function formatBudget(b){
+  if (b.budgetMin && b.budgetMax) return `€${b.budgetMin}–€${b.budgetMax}`
+  if (b.budgetMin) return `from €${b.budgetMin}`
+  if (b.budgetMax) return `up to €${b.budgetMax}`
+  return '—'
+}
+
 function FeaturedPros() {
   const pros = [
     { name: 'Northwind Studio', tags: ['Web', 'Branding'], rating: 4.8, projects: 126 },
@@ -301,22 +470,10 @@ function Testimonials() {
 
 function FAQ() {
   const faqs = [
-    {
-      q: 'Is posting a brief free?',
-      a: 'Yes. Posting is free. You only pay the professional you hire.'
-    },
-    {
-      q: 'How quickly will I get offers?',
-      a: 'Most briefs receive initial responses within 24 hours.'
-    },
-    {
-      q: 'Can I invite my own vendors?',
-      a: 'Absolutely. Share a private link and your vendors can submit proposals here.'
-    },
-    {
-      q: 'Do you vet professionals?',
-      a: 'Profiles include verified details, portfolio links and client ratings to help you decide.'
-    },
+    { q: 'Is posting a brief free?', a: 'Yes. Posting is free. You only pay the professional you hire.' },
+    { q: 'How quickly will I get offers?', a: 'Most briefs receive initial responses within 24 hours.' },
+    { q: 'Can I invite my own vendors?', a: 'Absolutely. Share a private link and your vendors can submit proposals here.' },
+    { q: 'Do you vet professionals?', a: 'Profiles include verified details, portfolio links and client ratings to help you decide.' },
   ]
   return (
     <section id="faq" className="py-20 bg-gradient-to-b from-slate-50 to-white">
@@ -325,7 +482,7 @@ function FAQ() {
           <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Frequently asked questions</h2>
         </div>
         <div className="mx-auto mt-10 max-w-3xl divide-y divide-slate-200 rounded-2xl bg-white ring-1 ring-slate-200">
-          {faqs.map((f, i) => (
+          {faqs.map((f) => (
             <details key={f.q} className="group p-6">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
                 <span className="text-base font-semibold">{f.q}</span>
@@ -377,7 +534,7 @@ function Footer() {
             <ul className="mt-2 space-y-2 text-sm text-slate-600">
               <li><a href="#how" className="hover:text-slate-900">How it works</a></li>
               <li><a href="#categories" className="hover:text-slate-900">Categories</a></li>
-              <li><a href="#pros" className="hover:text-slate-900">Professionals</a></li>
+              <li><a href="#published-briefs" className="hover:text-slate-900">Latest briefs</a></li>
             </ul>
           </div>
           <div>
@@ -410,27 +567,60 @@ function Footer() {
   )
 }
 
-function BriefForm({ onClose }) {
+function BriefForm({ onClose, onSubmit }) {
+  const [form, setForm] = useState({
+    title: '',
+    category: 'Websites',
+    budgetMin: '',
+    budgetMax: '',
+    timeline: 'ASAP (within 1–2 weeks)',
+    details: '',
+    name: '',
+    email: ''
+  })
+  const canSubmit = useMemo(() => form.title.trim() && form.details.trim(), [form])
+
+  function handleChange(e){
+    const { name, value } = e.target
+    setForm(prev => ({ ...prev, [name]: value }))
+  }
+
+  function handleSubmit(e){
+    e.preventDefault()
+    if (!canSubmit) return
+    const payload = {
+      title: form.title.trim(),
+      category: form.category,
+      budgetMin: form.budgetMin ? Number(form.budgetMin) : undefined,
+      budgetMax: form.budgetMax ? Number(form.budgetMax) : undefined,
+      timeline: form.timeline,
+      details: form.details.trim(),
+      name: form.name.trim(),
+      email: form.email.trim(),
+    }
+    onSubmit?.(payload)
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4">
       <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-xl ring-1 ring-slate-200">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-xl font-bold tracking-tight">Post a brief</h3>
-            <p className="mt-1 text-sm text-slate-600">Tell us about your project and timing. We’ll notify matching pros.</p>
+            <p className="mt-1 text-sm text-slate-600">Tell us about your project and timing. We'll publish it below and notify the team by email.</p>
           </div>
           <button onClick={onClose} className="rounded-full border border-slate-300 p-2 hover:bg-slate-50" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form className="mt-6 grid gap-4">
+        <form onSubmit={handleSubmit} className="mt-6 grid gap-4">
           <div className="grid gap-2">
             <label className="text-sm font-medium">Project title</label>
-            <input className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., Website redesign for coffee brand" />
+            <input name="title" value={form.title} onChange={handleChange} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., Website redesign for coffee brand" required />
           </div>
           <div className="grid gap-2">
             <label className="text-sm font-medium">Category</label>
-            <select className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <select name="category" value={form.category} onChange={handleChange} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
               <option>Websites</option>
               <option>E‑commerce</option>
               <option>Logos & Branding</option>
@@ -444,13 +634,13 @@ function BriefForm({ onClose }) {
           <div className="grid gap-2">
             <label className="text-sm font-medium">Budget (EUR)</label>
             <div className="flex gap-3">
-              <input type="number" className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Min" />
-              <input type="number" className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Max" />
+              <input name="budgetMin" type="number" value={form.budgetMin} onChange={handleChange} className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Min" />
+              <input name="budgetMax" type="number" value={form.budgetMax} onChange={handleChange} className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Max" />
             </div>
           </div>
           <div className="grid gap-2">
             <label className="text-sm font-medium">Timeline</label>
-            <select className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <select name="timeline" value={form.timeline} onChange={handleChange} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
               <option>ASAP (within 1–2 weeks)</option>
               <option>Within 1 month</option>
               <option>Flexible</option>
@@ -458,23 +648,23 @@ function BriefForm({ onClose }) {
           </div>
           <div className="grid gap-2">
             <label className="text-sm font-medium">Project details</label>
-            <textarea rows={5} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Describe goals, deliverables, tech stack, examples you like, etc." />
+            <textarea name="details" value={form.details} onChange={handleChange} rows={5} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Describe goals, deliverables, tech stack, examples you like, etc." required />
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="grid gap-2">
               <label className="text-sm font-medium">Your name</label>
-              <input className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input name="name" value={form.name} onChange={handleChange} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div className="grid gap-2">
               <label className="text-sm font-medium">Email</label>
-              <input type="email" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input name="email" type="email" value={form.email} onChange={handleChange} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
           <div className="flex items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-sm text-slate-600">
-              <input type="checkbox" className="h-4 w-4 rounded border-slate-300" /> I agree to the Terms and Privacy
+              <input type="checkbox" className="h-4 w-4 rounded border-slate-300" required /> I agree to the Terms and Privacy
             </label>
-            <button type="button" className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500">Submit brief</button>
+            <button disabled={!canSubmit} type="submit" className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">Submit brief</button>
           </div>
         </form>
       </div>
@@ -508,109 +698,27 @@ function Logo({ className = '' }) {
     </svg>
   )
 }
+function Sparkle(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M12 3l2 4 4 2-4 2-2 4-2-4-4-2 4-2 2-4z" /></svg>) }
+function Play(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M8 5v14l11-7-11-7z" /></svg>) }
+function Shield(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M12 2l8 4v6c0 5-3.8 9.2-8 10-4.2-.8-8-5-8-10V6l8-4z" /></svg>) }
+function Clock(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6l5 3 1-1.7-4-2.3V7z" /></svg>) }
+function Star(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M12 3l3 6 6 1-4.5 4.3 1 6.7L12 18l-5.5 3 1-6.7L3 10l6-1 3-6z" /></svg>) }
+function Plus(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M11 5h2v14h-2z" /><path d="M5 11h14v2H5z" /></svg>) }
+function ArrowRight(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M13 5l7 7-7 7-1.4-1.4L16.2 13H4v-2h12.2L11.6 6.4 13 5z" /></svg>) }
+function X(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3 1.4 1.4z" /></svg>) }
+function Pencil(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" /><path d="M20.71 7.04a1 1 0 000-1.41L18.37 3.3a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.84z" /></svg>) }
+function Bolt(props) { return (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}><path d="M11 21l6-10h-4l2-8-8 12h4l-2 6z" /></svg>) }
 
-function Sparkle(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M12 3l2 4 4 2-4 2-2 4-2-4-4-2 4-2 2-4z" />
-    </svg>
-  )
-}
-
-function Play(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M8 5v14l11-7-11-7z" />
-    </svg>
-  )
-}
-
-function Shield(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M12 2l8 4v6c0 5-3.8 9.2-8 10-4.2-.8-8-5-8-10V6l8-4z" />
-    </svg>
-  )
-}
-
-function Clock(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6l5 3 1-1.7-4-2.3V7z" />
-    </svg>
-  )
-}
-
-function Star(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M12 3l3 6 6 1-4.5 4.3 1 6.7L12 18l-5.5 3 1-6.7L3 10l6-1 3-6z" />
-    </svg>
-  )
-}
-
-function Plus(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M11 5h2v14h-2z" /><path d="M5 11h14v2H5z" />
-    </svg>
-  )
-}
-
-function ArrowRight(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M13 5l7 7-7 7-1.4-1.4L16.2 13H4v-2h12.2L11.6 6.4 13 5z" />
-    </svg>
-  )
-}
-
-function X(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3 1.4 1.4z" />
-    </svg>
-  )
-}
-
-// Added missing icons causing runtime error
-function Pencil(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" />
-      <path d="M20.71 7.04a1 1 0 000-1.41L18.37 3.3a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.84z" />
-    </svg>
-  )
-}
-
-function Bolt(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={props.className}>
-      <path d="M11 21l6-10h-4l2-8-8 12h4l-2 6z" />
-    </svg>
-  )
-}
-
-// --- Dev smoke tests (non‑intrusive) ---
+// --- Dev smoke tests (gentle, non‑blocking) ---
 function runSmokeTests() {
   try {
     console.assert(typeof Pencil === 'function', 'Pencil icon should be defined')
     console.assert(typeof Bolt === 'function', 'Bolt icon should be defined')
     console.assert(typeof Shield === 'function', 'Shield icon should be defined')
-
-    // Can create elements without throwing
-    React.createElement(Pencil, { className: 'h-4 w-4' })
-    React.createElement(Bolt, { className: 'h-4 w-4' })
-
-    // HowItWorks should conceptually have 3 steps
-    const expectedSteps = 3
-    console.assert(expectedSteps === 3, 'HowItWorks should render 3 steps')
-  } catch (e) {
-    console.error('Smoke tests failed', e)
-  }
+    setTimeout(() => {
+      const el = (typeof document !== 'undefined') ? document.getElementById('published-briefs') : null
+      if (!el) console.warn('PublishedBriefs not found yet (may render later)')
+    }, 0)
+  } catch (e) { console.error('Smoke tests failed', e) }
 }
-
-if (typeof window !== 'undefined' && !window.__BRIEFBRIDGE_TESTED) {
-  runSmokeTests()
-  window.__BRIEFBRIDGE_TESTED = true
-}
+if (typeof window !== 'undefined' && !window.__BRIEFBRIDGE_TESTED) { runSmokeTests(); window.__BRIEFBRIDGE_TESTED = true }
