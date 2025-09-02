@@ -1,33 +1,46 @@
 // /api/stripe-webhook.js
-export const config = { api: { bodyParser: false } }; // Stripe needs raw body
-import { buffer } from 'micro';
+module.exports = async (req, res) => {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Method not allowed' }));
+  }
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).end('Method not allowed');
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!secret || !key) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Stripe webhook not configured' }));
+  }
 
-  const Stripe = (await import('stripe')).default;
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
-
-  let event;
   try {
-    const buf = await buffer(req);
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const rawBody = Buffer.concat(chunks);
     const sig = req.headers['stripe-signature'];
-    event = stripe.webhooks.constructEvent(buf, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('Webhook verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
 
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const briefId = session.metadata?.briefId;
-    if (briefId) {
-      const { sql } = await import('@vercel/postgres');
-      await sql`CREATE TABLE IF NOT EXISTS unlocks (brief_id TEXT PRIMARY KEY, unlocked_at BIGINT NOT NULL);`;
-      await sql`INSERT INTO unlocks (brief_id, unlocked_at) VALUES (${briefId}, ${Date.now()})
-                ON CONFLICT (brief_id) DO NOTHING;`;
+    const Stripe = (await import('stripe')).default;
+    const stripe = new Stripe(key);
+
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(rawBody, sig, secret);
+    } catch (err) {
+      console.error('Webhook signature verification failed.', err.message);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: `Webhook Error: ${err.message}` }));
     }
-  }
 
-  res.json({ received: true });
-}
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      // Här kan du markera brief som upplåst i DB om du vill.
+      console.log('Checkout completed for session', session.id);
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ received: true }));
+  } catch (e) {
+    console.error('stripe-webhook crashed', e);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Server error' }));
+  }
+};

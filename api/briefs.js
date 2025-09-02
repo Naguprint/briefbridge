@@ -1,4 +1,4 @@
-// /api/briefs.js — Node/CJS, robust: använder Postgres om tillgängligt, annars in-memory
+// /api/briefs.js — Node/CJS, robust: Postgres om tillgängligt, annars in-memory
 let MEMORY_STORE = []; // fallback-lagring under functionens liv
 
 module.exports = async (req, res) => {
@@ -6,10 +6,7 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    res.statusCode = 200;
-    return res.end();
-  }
+  if (req.method === 'OPTIONS') { res.statusCode = 200; return res.end(); }
 
   const hasDB = !!process.env.DATABASE_URL;
   const mailTo = process.env.MAIL_TO || 'info@naguprint.fi';
@@ -18,10 +15,8 @@ module.exports = async (req, res) => {
     if (req.body && typeof req.body === 'object') return req.body;
     return await new Promise((resolve, reject) => {
       let data = '';
-      req.on('data', (c) => (data += c));
-      req.on('end', () => {
-        try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(e); }
-      });
+      req.on('data', c => data += c);
+      req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(e); } });
       req.on('error', reject);
     });
   }
@@ -31,9 +26,7 @@ module.exports = async (req, res) => {
       if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
       const c = await import('crypto');
       return c.randomUUID ? c.randomUUID() : String(Date.now());
-    } catch {
-      return String(Date.now());
-    }
+    } catch { return String(Date.now()); }
   }
 
   async function ensureTable(sql) {
@@ -72,6 +65,7 @@ module.exports = async (req, res) => {
                     ${brief.budgetMin ?? null}, ${brief.budgetMax ?? null},
                     ${brief.timeline}, ${brief.details}, ${brief.name ?? null}, ${brief.email ?? null});
           `;
+          // Valfri e-post via Resend om satt (krascha inte om det faller)
           if (process.env.RESEND_API_KEY) {
             try {
               const { Resend } = await import('resend');
@@ -91,15 +85,13 @@ module.exports = async (req, res) => {
                   `${brief.details}`,
                 ].join('\n'),
               });
-            } catch (e) {
-              console.error('Email failed', e);
-            }
+            } catch (e) { console.error('Email failed', e); }
           }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ created: { id, createdAt, ...brief } }));
         } catch (dbErr) {
           console.error('DB error, falling back to memory:', dbErr);
-          // fortsätt till in-memory nedan
+          // fall-through till in-memory
         }
       }
 
@@ -138,7 +130,6 @@ module.exports = async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ briefs }));
       }
-      // In-memory
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ briefs: [...MEMORY_STORE] }));
     } catch (e) {
