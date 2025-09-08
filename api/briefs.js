@@ -71,7 +71,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ created });
   }
 
-  if (req.method === 'GET')) {
+  if (req.method === 'GET') {
     const { rows } = await sql`SELECT * FROM briefs ORDER BY created_at DESC LIMIT 100;`;
     const briefs = rows.map(r => ({
       id: r.id,
