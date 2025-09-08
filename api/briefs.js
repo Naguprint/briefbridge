@@ -1,4 +1,8 @@
 // /api/briefs.js
+import { neon } from '@neondatabase/serverless';
+
+const sql = neon(process.env.POSTGRES_URL);
+
 export default async function handler(req, res) {
   // Allow CORS for local dev
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7,10 +11,6 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const mailTo = process.env.MAIL_TO || 'info@naguprint.fi';
-
-  // --- DB (Vercel Postgres) ---
-  // Install: npm i @vercel/postgres
-  const { sql } = await import('@vercel/postgres');
 
   // Ensure table exists
   await sql`CREATE TABLE IF NOT EXISTS briefs(
