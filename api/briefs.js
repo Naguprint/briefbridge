@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     if (!brief || !brief.title || !brief.details) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    const id = crypto.randomUUID?.() || String(Date.now());
+    const id = Date.now().toString() + Math.random().toString(36).slice(2, 11);
     const createdAt = Date.now();
     const created = { id, createdAt, ...brief };
 
