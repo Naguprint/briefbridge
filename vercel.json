@@ -1,6 +1,8 @@
 {
   "functions": {
-    "api/**/*.js": { "runtime": "nodejs22.x" }
+    "api/briefs.js": { "runtime": "nodejs22.x" },
+    "api/create-checkout-session.js": { "runtime": "nodejs22.x" },
+    "api/stripe-webhook.js": { "runtime": "nodejs22.x" }
   },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
