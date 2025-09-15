@@ -82,21 +82,21 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'GET') {
-      const  rows  = await sql`SELECT * FROM briefs ORDER BY created_at DESC LIMIT 100;`;
-      const briefs = rows.map(r => ({
-        id: r.id,
-        createdAt: Number(r.created_at),
-        title: r.title,
-        category: r.category,
-        budgetMin: r.budget_min,
-        budgetMax: r.budget_max,
-        timeline: r.timeline,
-        details: r.details,
-        name: r.name,
-        email: r.email
-      }));
-      return res.status(200).json({ briefs });
-    }
+  const rows = await sql`SELECT * FROM briefs ORDER BY created_at DESC LIMIT 100;`;
+  const briefs = rows.map(r => ({
+    id: r.id,
+    createdAt: Number(r.created_at),
+    title: r.title,
+    category: r.category,
+    budgetMin: r.budget_min,
+    budgetMax: r.budget_max,
+    timeline: r.timeline,
+    details: r.details,
+    name: r.name,
+    email: r.email
+  }));
+  return res.status(200).json({ briefs });
+}
 
     return res.status(405).json({ error: 'Method not allowed' });
 
