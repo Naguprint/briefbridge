@@ -411,28 +411,120 @@ function Footer() {
 }
 
 function BriefForm({ onClose }) {
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setIsSubmitting(true)
+    setError(null)
+
+    // Get form data
+    const formData = new FormData(e.target)
+    
+    // Build brief object
+    const brief = {
+      title: formData.get('title'),
+      category: formData.get('category'),
+      budgetMin: formData.get('budgetMin') ? parseInt(formData.get('budgetMin')) : null,
+      budgetMax: formData.get('budgetMax') ? parseInt(formData.get('budgetMax')) : null,
+      timeline: formData.get('timeline'),
+      details: formData.get('details'),
+      name: formData.get('name'),
+      email: formData.get('email')
+    }
+
+    try {
+      // Determine API URL based on environment
+      const apiUrl = window.location.hostname === 'localhost' 
+        ? 'http://localhost:3000/api/briefs'  // For local development
+        : '/api/briefs'  // For production (Vercel)
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ brief })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Something went wrong')
+      }
+
+      // Success!
+      setSuccess(true)
+      
+      // Close form after 2 seconds
+      setTimeout(() => {
+        onClose()
+      }, 2000)
+
+    } catch (err) {
+      console.error('Error submitting brief:', err)
+      setError(err.message || 'Failed to submit brief. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  if (success) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+        <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-xl ring-1 ring-slate-200 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+            <svg className="h-8 w-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h3 className="text-xl font-bold">Brief submitted successfully!</h3>
+          <p className="mt-2 text-sm text-slate-600">We'll notify matching professionals about your project.</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-4">
       <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-xl ring-1 ring-slate-200">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-xl font-bold tracking-tight">Post a brief</h3>
-            <p className="mt-1 text-sm text-slate-600">Tell us about your project and timing. We’ll notify matching pros.</p>
+            <p className="mt-1 text-sm text-slate-600">Tell us about your project and timing. We'll notify matching pros.</p>
           </div>
           <button onClick={onClose} className="rounded-full border border-slate-300 p-2 hover:bg-slate-50" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form className="mt-6 grid gap-4">
-          <div className="grid gap-2">
-            <label className="text-sm font-medium">Project title</label>
-            <input className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., Website redesign for coffee brand" />
+
+        {error && (
+          <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            {error}
           </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="mt-6 grid gap-4">
+          <div className="grid gap-2">
+            <label className="text-sm font-medium">Project title *</label>
+            <input 
+              name="title"
+              required
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+              placeholder="e.g., Website redesign for coffee brand" 
+            />
+          </div>
+          
           <div className="grid gap-2">
             <label className="text-sm font-medium">Category</label>
-            <select className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <select 
+              name="category"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
               <option>Websites</option>
-              <option>E‑commerce</option>
+              <option>E-commerce</option>
               <option>Logos & Branding</option>
               <option>UI/UX</option>
               <option>Graphic Design</option>
@@ -441,40 +533,78 @@ function BriefForm({ onClose }) {
               <option>Programming</option>
             </select>
           </div>
+          
           <div className="grid gap-2">
             <label className="text-sm font-medium">Budget (EUR)</label>
             <div className="flex gap-3">
-              <input type="number" className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Min" />
-              <input type="number" className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Max" />
+              <input 
+                name="budgetMin"
+                type="number" 
+                className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                placeholder="Min" 
+              />
+              <input 
+                name="budgetMax"
+                type="number" 
+                className="w-1/2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                placeholder="Max" 
+              />
             </div>
           </div>
+          
           <div className="grid gap-2">
             <label className="text-sm font-medium">Timeline</label>
-            <select className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <select 
+              name="timeline"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
               <option>ASAP (within 1–2 weeks)</option>
               <option>Within 1 month</option>
               <option>Flexible</option>
             </select>
           </div>
+          
           <div className="grid gap-2">
-            <label className="text-sm font-medium">Project details</label>
-            <textarea rows={5} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Describe goals, deliverables, tech stack, examples you like, etc." />
+            <label className="text-sm font-medium">Project details *</label>
+            <textarea 
+              name="details"
+              required
+              rows={5} 
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+              placeholder="Describe goals, deliverables, tech stack, examples you like, etc." 
+            />
           </div>
+          
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="grid gap-2">
               <label className="text-sm font-medium">Your name</label>
-              <input className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input 
+                name="name"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+              />
             </div>
             <div className="grid gap-2">
               <label className="text-sm font-medium">Email</label>
-              <input type="email" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input 
+                name="email"
+                type="email" 
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+              />
             </div>
           </div>
+          
           <div className="flex items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-sm text-slate-600">
-              <input type="checkbox" className="h-4 w-4 rounded border-slate-300" /> I agree to the Terms and Privacy
+              <input type="checkbox" className="h-4 w-4 rounded border-slate-300" required /> 
+              I agree to the Terms and Privacy
             </label>
-            <button type="button" className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500">Submit brief</button>
+            <button 
+              type="submit" 
+              disabled={isSubmitting}
+              className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? 'Submitting...' : 'Submit brief'}
+            </button>
           </div>
         </form>
       </div>
