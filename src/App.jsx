@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 
 // Single‑file React landing page inspired by Slack aesthetics
 // — clean typography, rounded pills, subtle gradients, soft shadows
@@ -173,36 +173,231 @@ function HowItWorks() {
 }
 
 function Categories({ onCTAClick }) {
+  const [selectedCategory, setSelectedCategory] = useState(null)
+  
   const cats = [
-    'Websites', 'E‑commerce', 'Logos & Branding', 'Graphic Design', 'UI/UX', 'Illustration',
+    'Websites', 'E-commerce', 'Logos & Branding', 'Graphic Design', 'UI/UX', 'Illustration',
     'SEO', 'Copywriting', 'Social Media', 'Photography', 'Video', 'Programming'
   ]
+  
   return (
-    <section id="categories" className="py-20 bg-gradient-to-b from-white to-slate-50">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="flex items-end justify-between">
-          <div>
-            <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Popular categories</h2>
-            <p className="mt-2 text-slate-600">Browse specialties or just post a brief and let pros come to you.</p>
+    <>
+      <section id="categories" className="py-20 bg-gradient-to-b from-white to-slate-50">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex items-end justify-between">
+            <div>
+              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Popular categories</h2>
+              <p className="mt-2 text-slate-600">Browse specialties or just post a brief and let pros come to you.</p>
+            </div>
+            <button onClick={onCTAClick} className="hidden md:inline-flex rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800">Post a brief</button>
           </div>
-          <button onClick={onCTAClick} className="hidden md:inline-flex rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800">Post a brief</button>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {cats.map((c) => (
+              <button 
+                key={c} 
+                onClick={() => setSelectedCategory(c)}
+                className="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-md text-left"
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold">{c}</h3>
+                  <ArrowRight className="h-5 w-5 text-slate-400 group-hover:text-slate-700" />
+                </div>
+                <p className="mt-1 text-sm text-slate-600">Hand-picked freelancers & studios.</p>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          {cats.map((c) => (
-            <a key={c} href="#" className="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-md">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold">{c}</h3>
-                <ArrowRight className="h-5 w-5 text-slate-400 group-hover:text-slate-700" />
-              </div>
-              <p className="mt-1 text-sm text-slate-600">Hand‑picked freelancers & studios.</p>
-            </a>
-          ))}
-        </div>
-      </div>
-    </section>
+      </section>
+      
+      {selectedCategory && (
+        <CategoryBriefsModal 
+          category={selectedCategory} 
+          onClose={() => setSelectedCategory(null)} 
+        />
+      )}
+    </>
   )
 }
+function CategoryBriefsModal({ category, onClose }) {
+  const [briefs, setBriefs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [isPaid, setIsPaid] = useState(false)
+  const [paymentLoading, setPaymentLoading] = useState(false)
+  const [error, setError] = useState(null)
 
+  useEffect(() => {
+    // Kolla om användaren redan har betalat (sparat i localStorage för demo)
+    const paidCategories = JSON.parse(localStorage.getItem('paidCategories') || '[]')
+    if (paidCategories.includes(category)) {
+      setIsPaid(true)
+      fetchBriefs()
+    } else {
+      setLoading(false)
+    }
+  }, [category])
+
+  const fetchBriefs = async () => {
+    try {
+      const response = await fetch('/api/briefs')
+      const data = await response.json()
+      // Filtrera briefs per kategori
+      const filteredBriefs = data.briefs.filter(b => b.category === category)
+      setBriefs(filteredBriefs)
+    } catch (err) {
+      setError('Failed to load briefs')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handlePayment = async () => {
+  setPaymentLoading(true)
+  setError(null)
+
+  try {
+    const response = await fetch('/api/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category,
+        priceAmount: 2900, // 29 EUR i cents
+        successUrl: window.location.href + '?payment=success',
+        cancelUrl: window.location.href
+      })
+    })
+    
+    const data = await response.json()
+    
+    if (data.sessionUrl) {
+      window.location.href = data.sessionUrl // Redirect till Stripe Checkout
+    } else {
+      throw new Error('Failed to create checkout session')
+    }
+    
+  } catch (err) {
+    setError('Payment failed. Please try again.')
+  } finally {
+    setPaymentLoading(false)
+  }
+}
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="w-full max-w-4xl max-h-[90vh] overflow-auto rounded-3xl bg-white shadow-xl ring-1 ring-slate-200">
+        {/* Header */}
+        <div className="sticky top-0 bg-white border-b border-slate-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold">{category} Briefs</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {isPaid ? `${briefs.length} active briefs` : 'Unlock access to see all briefs'}
+              </p>
+            </div>
+            <button onClick={onClose} className="rounded-full border border-slate-300 p-2 hover:bg-slate-50">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          {loading ? (
+            <div className="text-center py-12">
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600"></div>
+              <p className="mt-2 text-sm text-slate-600">Loading...</p>
+            </div>
+          ) : !isPaid ? (
+            /* Payment Required */
+            <div className="text-center py-12">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
+                <Shield className="h-8 w-8 text-indigo-600" />
+              </div>
+              <h3 className="text-xl font-bold">Access {category} Briefs</h3>
+              <p className="mt-2 text-slate-600 max-w-md mx-auto">
+                Get instant access to all briefs in this category. Connect directly with clients looking for {category.toLowerCase()} services.
+              </p>
+              
+              <div className="mt-8 max-w-sm mx-auto rounded-2xl bg-slate-50 p-6 ring-1 ring-slate-200">
+                <div className="text-3xl font-bold">€29</div>
+                <div className="text-sm text-slate-600 mt-1">One-time payment</div>
+                <ul className="mt-4 space-y-2 text-sm text-left">
+                  <li className="flex items-center gap-2">
+                    <span className="text-green-600">✓</span> Instant access to all {category} briefs
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="text-green-600">✓</span> Direct client contact details
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="text-green-600">✓</span> New briefs for 30 days
+                  </li>
+                </ul>
+                
+                {error && (
+                  <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                    {error}
+                  </div>
+                )}
+                
+                <button
+                  onClick={handlePayment}
+                  disabled={paymentLoading}
+                  className="mt-6 w-full rounded-xl bg-indigo-600 py-3 text-white font-semibold shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {paymentLoading ? 'Processing...' : 'Get Access Now'}
+                </button>
+                
+                <p className="mt-3 text-xs text-slate-500">
+                  Secure payment via Stripe. Cancel anytime.
+                </p>
+              </div>
+            </div>
+          ) : briefs.length === 0 ? (
+            /* No briefs */
+            <div className="text-center py-12">
+              <p className="text-slate-600">No briefs in this category yet.</p>
+              <button onClick={onClose} className="mt-4 text-sm font-semibold text-indigo-600 hover:text-indigo-500">
+                Browse other categories →
+              </button>
+            </div>
+          ) : (
+            /* Briefs List */
+            <div className="space-y-4">
+              {briefs.map((brief) => (
+                <div key={brief.id} className="rounded-2xl bg-white p-6 ring-1 ring-slate-200">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-semibold">{brief.title}</h3>
+                      <div className="mt-1 flex items-center gap-4 text-sm text-slate-600">
+                        <span>Budget: €{brief.budgetMin || '?'} - €{brief.budgetMax || '?'}</span>
+                        <span>Timeline: {brief.timeline}</span>
+                      </div>
+                      <p className="mt-3 text-slate-700 line-clamp-3">{brief.details}</p>
+                      
+                      {(brief.name || brief.email) && (
+                        <div className="mt-4 rounded-lg bg-slate-50 p-3">
+                          <div className="text-sm font-medium text-slate-700">Contact:</div>
+                          {brief.name && <div className="text-sm text-slate-600">{brief.name}</div>}
+                          {brief.email && (
+                            <a href={`mailto:${brief.email}`} className="text-sm text-indigo-600 hover:text-indigo-500">
+                              {brief.email}
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="ml-4 text-xs text-slate-500">
+                      {new Date(brief.createdAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 function FeaturedPros() {
   const pros = [
     { name: 'Northwind Studio', tags: ['Web', 'Branding'], rating: 4.8, projects: 126 },
