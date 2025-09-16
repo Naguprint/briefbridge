@@ -1,5 +1,4 @@
-const Stripe = require('stripe');
-
+// Use CommonJS for Vercel Functions
 module.exports = async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,15 +14,45 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-    const { category, priceAmount, successUrl, cancelUrl } = req.body;
-
-    if (!category || !priceAmount || !successUrl || !cancelUrl) {
-      return res.status(400).json({ 
-        error: 'Missing required parameters' 
+    // Check if Stripe key exists
+    if (!process.env.STRIPE_SECRET_KEY) {
+      console.error('STRIPE_SECRET_KEY is not set');
+      return res.status(500).json({ 
+        error: 'Stripe configuration error',
+        details: 'Missing API key'
       });
     }
 
+    // Import Stripe - using require inside the function to handle potential issues
+    let Stripe;
+    try {
+      Stripe = require('stripe');
+    } catch (importError) {
+      console.error('Failed to import Stripe:', importError);
+      return res.status(500).json({ 
+        error: 'Failed to load payment processor',
+        details: importError.message
+      });
+    }
+
+    // Initialize Stripe
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    
+    // Get parameters from request body
+    const { category, priceAmount, successUrl, cancelUrl } = req.body;
+
+    // Validate required parameters
+    if (!category || !priceAmount || !successUrl || !cancelUrl) {
+      return res.status(400).json({ 
+        error: 'Missing required parameters',
+        required: ['category', 'priceAmount', 'successUrl', 'cancelUrl'],
+        received: { category, priceAmount, successUrl, cancelUrl }
+      });
+    }
+
+    console.log('Creating checkout session for:', { category, priceAmount });
+
+    // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
@@ -47,16 +76,36 @@ module.exports = async function handler(req, res) {
       },
     });
 
-    res.status(200).json({ 
+    console.log('Checkout session created:', session.id);
+
+    return res.status(200).json({ 
       sessionUrl: session.url,
       sessionId: session.id 
     });
     
   } catch (error) {
-    console.error('Stripe error:', error);
-    res.status(500).json({ 
+    console.error('Error in create-checkout-session:', error);
+    
+    // Check for specific Stripe errors
+    if (error.type === 'StripeAuthenticationError') {
+      return res.status(500).json({ 
+        error: 'Stripe authentication failed',
+        details: 'Invalid API key'
+      });
+    }
+    
+    if (error.type === 'StripeInvalidRequestError') {
+      return res.status(400).json({ 
+        error: 'Invalid request to Stripe',
+        details: error.message
+      });
+    }
+    
+    // Generic error response
+    return res.status(500).json({ 
       error: 'Failed to create checkout session',
-      details: error.message 
+      details: error.message || 'Unknown error',
+      type: error.type || 'Unknown'
     });
   }
 }
