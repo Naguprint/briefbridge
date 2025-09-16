@@ -1,6 +1,6 @@
 {
   "installCommand": "npm install --force",
-  "buildCommand": "node build.js",
+  "buildCommand": "node build.cjs",
   "outputDirectory": "dist",
   "framework": null
 }
